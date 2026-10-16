@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mini Chess ♟</title>
+<style>
+*{box-sizing:border-box}body{background:#101827;color:#f2f5fa;font:16px system-ui,Arial;margin:0;min-height:100vh}
+main{max-width:1040px;margin:38px auto;padding:0 18px}h1{font-size:38px;margin:0 0 6px}h1 span{color:#79c9b4}.subtitle{color:#aab4c5;margin:0 0 30px}
+.game{display:grid;grid-template-columns:minmax(0,630px) 280px;gap:26px;align-items:start}.board-wrap{background:#1b283c;border:1px solid #334256;border-radius:18px;padding:18px}
+.status{display:flex;gap:12px;align-items:center;margin:0 0 14px;font-weight:700;font-size:19px}.status-icon{font-size:32px}
+.board{width:100%;aspect-ratio:1;display:grid;grid-template-columns:repeat(8,1fr);box-shadow:0 12px 20px #0004;overflow:hidden;border-radius:5px}
+.sq{border:0;border-radius:0;padding:0;aspect-ratio:1;display:grid;place-items:center;position:relative;cursor:pointer;font-size:clamp(30px,5.6vw,59px);line-height:1}
+.light{background:#e3e7dc}.dark{background:#7ea395}.sq.sel{box-shadow:inset 0 0 0 5px #f9d65c}.sq.last{background:#d4d88f}.sq.dark.last{background:#abc276}
+.sq.check{background:#ef8181}.sq.hint:after{content:'';position:absolute;background:#26392a55;width:25%;height:25%;border-radius:50%;pointer-events:none}
+.sq.capture:after{content:'';position:absolute;inset:4px;border:5px solid #eb664a99;border-radius:50%;pointer-events:none}
+.piece{z-index:1;text-shadow:0 2px 3px #0007;user-select:none}.white-piece{color:#fff;text-shadow:-1px -1px 1px #374151,1px 2px 2px #18202a}.black-piece{color:#172536;text-shadow:0 1px 1px #fff8}
+.coord{position:absolute;font-size:10px;font-weight:700;pointer-events:none;z-index:2}.rank{top:3px;left:4px}.file{bottom:2px;right:4px}.light .coord{color:#527d70}.dark .coord{color:#f2f5e8}
+.card{background:#1b283c;border:1px solid #334256;border-radius:16px;padding:18px;margin-bottom:16px}.card h2{font-size:16px;margin:0 0 14px}
+button.action{cursor:pointer;background:#34455c;color:white;border:1px solid #46566b;padding:11px 13px;border-radius:9px;font:inherit}
+button.action.primary{background:#50ac96;color:#092b23;font-weight:800;width:100%;border-color:#50ac96;margin-bottom:9px}
+.buttons{display:flex;gap:8px}.buttons button{flex:1;font-size:13px}button:disabled{opacity:.45;cursor:not-allowed}
+#history{max-height:310px;overflow:auto;line-height:2}.move{display:grid;grid-template-columns:42px 1fr 1fr;border-bottom:1px solid #354358;padding:1px 5px}.muted,.note{color:#abb8c9}.note{font-size:13px;line-height:1.6;margin-top:18px}
+footer{text-align:center;color:#8190a2;margin:30px 0;font-size:13px}dialog{border:1px solid #506477;border-radius:14px;background:#1b283c;color:white;max-width:92vw;text-align:center}dialog::backdrop{background:#000a}.choices{display:flex;gap:8px}
+.choices button{font-size:45px;background:#c7d7cf;border:0;border-radius:8px;cursor:pointer;width:67px;height:67px}
+@media(max-width:750px){.game{grid-template-columns:1fr}.sq{font-size:clamp(29px,9vw,60px)}main{margin:20px auto}.board-wrap{padding:10px}.card{margin:0 0 12px}}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+</head>
+<body>
+<main><h1>♞ Mini <span>Chess</span></h1><p class="subtitle">Шахматы для двоих — прямо в браузере</p>
+<div class="game"><section class="board-wrap">
+<div class="status"><span class="status-icon" id="icon">♔</span><span id="status" role="status" aria-live="polite">Ход белых</span></div>
+<div id="board" class="board" role="grid" aria-label="Шахматная доска"></div>
+<p class="muted" id="count" style="font-size:13px;margin:12px 0 0">Ход 1 · Выберите фигуру</p>
+</section><aside>
+<div class="card"><h2>Управление</h2><button id="restart" class="action primary">↻ Новая партия</button>
+<div class="buttons"><button id="undo" class="action">↶ Отменить ход</button><button id="flip" class="action">⇅ Перевернуть</button></div></div>
+<div class="card"><h2>История ходов</h2><div id="history" class="muted">Первый ход за белыми ♙</div></div>
+<p class="note">Поддерживаются шах, мат, пат, рокировка, взятие на проходе и превращение пешки. Для работы игры требуется интернет-соединение.</p>
+</aside></div><footer>HTML · CSS · JavaScript · Проект на GitHub</footer>
+</main><dialog id="promotion"><h2>Превратить пешку в…</h2><div class="choices" id="choices"></div></dialog>
+<script>
+(function(){
+'use strict';
+const board=document.getElementById('board'),status=document.getElementById('status'),icon=document.getElementById('icon'),
+history=document.getElementById('history'),count=document.getElementById('count'),undo=document.getElementById('undo'),dialog=document.getElementById('promotion'),choices=document.getElementById('choices');
+if(typeof Chess==='undefined'){status.textContent='Не удалось загрузить шахматный движок. Проверьте интернет.';return}
+const game=new Chess(),glyphs={w:{k:'♔',q:'♕',r:'♖',b:'♗',n:'♘',p:'♙'},b:{k:'♚',q:'♛',r:'♜',b:'♝',n:'♞',p:'♟'}},files='abcdefgh';
+let selection=null,flipped=false,lastMove=null;
+function legal(from){return game.moves({square:from,verbose:true})}
+function render(){
+const turn=game.turn(),moves=selection?legal(selection):[];
+const targets=new Set(moves.map(m=>m.to));board.textContent='';
+for(let pos=0;pos<64;pos++){
+let r=Math.floor(pos/8),c=pos%8;if(flipped){r=7-r;c=7-c}
+const square=files[c]+(8-r),p=game.get(square),tile=document.createElement('button');
+tile.type='button';tile.className='sq '+((r+c)%2?'dark':'light');tile.setAttribute('role','gridcell');
+tile.setAttribute('aria-label',square+(p?' '+p.color+' '+p.type:' пустая клетка'));
+if(square===selection)tile.classList.add('sel');
+if(lastMove&&(lastMove.from===square||lastMove.to===square))tile.classList.add('last');
+if(targets.has(square))tile.classList.add(p?'capture':'hint');
+if(game.in_check()&&p&&p.type==='k'&&p.color===turn)tile.classList.add('check');
+if(p){const piece=document.createElement('span');piece.textContent=glyphs[p.color][p.type];piece.className='piece '+(p.color==='w'?'white-piece':'black-piece');tile.append(piece)}
+if((flipped?c===7:c===0)){const lbl=document.createElement('span');lbl.className='coord rank';lbl.textContent=8-r;tile.append(lbl)}
+if((flipped?r===0:r===7)){const lbl=document.createElement('span');lbl.className='coord file';lbl.textContent=files[c];tile.append(lbl)}
+tile.onclick=()=>select(square);board.append(tile)
+}
+let message=turn==='w'?'Ход белых':'Ход чёрных';
+if(game.in_checkmate())message='Мат! Победили '+(turn==='w'?'чёрные':'белые');
+else if(game.in_stalemate())message='Пат — ничья';
+else if(game.in_threefold_repetition())message='Ничья — троекратное повторение';
+else if(game.insufficient_material())message='Ничья — недостаточно фигур';
+else if(game.in_draw())message='Ничья';
+else if(game.in_check())message+=' — шах!';
+status.textContent=message;icon.textContent=turn==='w'?'♔':'♚';undo.disabled=game.history().length===0;
+const hist=game.history(),n=Math.floor(hist.length/2)+1;count.textContent='Ход '+n+' · '+hist.length+' полуходов';
+history.textContent='';
+if(!hist.length){history.textContent='Первый ход за белыми ♙';return}
+for(let i=0;i<hist.length;i+=2){let row=document.createElement('div');row.className='move';for(const value of [String(i/2+1)+'.',hist[i],hist[i+1]||'…']){const cell=document.createElement('span');cell.textContent=value;row.append(cell)}history.append(row)}
+history.scrollTop=history.scrollHeight;
+}
+function doMove(from,to,promotion){try{const result=game.move({from,to,promotion:promotion||'q'});if(result){lastMove=result;selection=null;render()}}catch(e){selection=null;render()}}
+function select(square){
+if(game.game_over())return;
+const p=game.get(square);
+if(selection&&legal(selection).some(m=>m.to===square)){
+if(legal(selection).some(m=>m.to===square&&m.flags.includes('p'))){showPromotion(selection,square);return}
+doMove(selection,square);return
+}
+selection=p&&p.color===game.turn()?(selection===square?null:square):null;render()
+}
+function showPromotion(from,to){choices.textContent='';for(const key of ['q','r','b','n']){const btn=document.createElement('button');btn.type='button';btn.textContent=glyphs[game.turn()][key];btn.setAttribute('aria-label',key);btn.onclick=()=>{dialog.close();doMove(from,to,key)};choices.append(btn)}dialog.showModal()}
+document.getElementById('restart').onclick=()=>{game.reset();selection=null;lastMove=null;render()};
+undo.onclick=()=>{game.undo();selection=null;lastMove=null;render()};
+document.getElementById('flip').onclick=()=>{flipped=!flipped;selection=null;render()};
+dialog.oncancel=()=>{selection=null;render()};
+render()
+})();
+</script></body></html>
